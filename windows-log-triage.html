@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Windows Log Triage</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono&display=swap">
+<style>
+:root{--bg:#f3f4f6;--card:#fff;--ink:#17202a;--mute:#5a6675;--line:#dbe0e6;--acc:#0e5a6b;--accbg:#e3f0f3;--crit:#b42318;--high:#c2570c;--med:#946800;--low:#3b6ea5;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101419;--card:#181e25;--ink:#e6eaef;--mute:#98a3b0;--line:#29323c;--acc:#5cc0d4;--accbg:#12303a;--crit:#ff8a7a;--high:#ffa564;--med:#e5b84a;--low:#7fb2e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101419;--card:#181e25;--ink:#e6eaef;--mute:#98a3b0;--line:#29323c;--acc:#5cc0d4;--accbg:#12303a;--crit:#ff8a7a;--high:#ffa564;--med:#e5b84a;--low:#7fb2e6;color-scheme:dark}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0 0 2px;font-weight:600}h2{font-size:16px;margin:0 0 10px;font-weight:600}
+p.sub{margin:0 0 18px;color:var(--mute);max-width:70ch}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:14px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+label{display:flex;flex-direction:column;font-size:13px;color:var(--mute);gap:4px}
+input[type=number],select,input[type=text]{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);width:110px}
+input[type=text]{width:100%}
+button{font:inherit;padding:7px 13px;border-radius:6px;border:1px solid var(--acc);background:var(--acc);color:#fff;cursor:pointer}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button{color:#0a1a1f}}
+button.ghost{background:transparent;color:var(--acc)}button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,.drop:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:22px;text-align:center;color:var(--mute);cursor:pointer;margin-bottom:12px}
+.drop.on{border-color:var(--acc);background:var(--accbg)}
+.stats{display:flex;flex-wrap:wrap;gap:22px}.stats div{min-width:90px}.stats b{display:block;font-size:24px;font-weight:600}.stats span{font-size:13px;color:var(--mute)}
+#banner{display:none;border-left:5px solid var(--crit);background:var(--card);border-radius:6px;padding:12px 14px;margin-bottom:14px;font-weight:500;border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.bars{display:flex;align-items:flex-end;gap:2px;height:90px;overflow-x:auto;padding-bottom:2px}
+.bar{flex:1 0 5px;min-width:5px;background:var(--low);opacity:.55;border-radius:2px 2px 0 0}.bar.hit{background:var(--crit);opacity:1}
+.axis{display:flex;justify-content:space-between;font-size:12px;color:var(--mute);margin-top:4px}
+details.al{border:1px solid var(--line);border-left:5px solid var(--low);border-radius:6px;margin-bottom:8px;background:var(--card)}
+details.al.critical{border-left-color:var(--crit)}details.al.high{border-left-color:var(--high)}details.al.medium{border-left-color:var(--med)}
+summary{cursor:pointer;padding:10px 12px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.sev{font-size:12px;font-weight:600;padding:1px 8px;border-radius:10px;border:1px solid currentColor}
+.sev.critical{color:var(--crit)}.sev.high{color:var(--high)}.sev.medium{color:var(--med)}.sev.low{color:var(--low)}
+.tag{font-size:12px;color:var(--mute)}.trig{font-size:12px;color:var(--crit);font-weight:600}
+.body{padding:0 12px 12px;color:var(--mute)}.body p{margin:0 0 8px;color:var(--ink)}
+.scroll{overflow-x:auto}table{border-collapse:collapse;font:12px "IBM Plex Mono",ui-monospace,monospace;width:100%}
+td,th{text-align:left;padding:3px 10px 3px 0;white-space:nowrap;border-bottom:1px solid var(--line)}
+pre.ai{white-space:pre-wrap;font:14px/1.55 "IBM Plex Sans",system-ui,sans-serif;margin:12px 0 0}
+.mut{color:var(--mute);font-size:13px}
+</style></head><body><main>
+<h1>Windows Log Triage</h1>
+<p class="sub">Load Windows Security event exports (CSV) from your SIEM. Detection runs in your browser. Nothing is uploaded unless you choose AI analysis, which sends only a summary of the alerts.</p>
+
+<section class="card">
+<div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose CSV files">Drop CSV or Excel files here or click to choose<br><span class="mut" id="fileinfo">No files loaded</span></div>
+<input id="file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls" multiple hidden>
+<div class="row"><label>Detection profile<select id="prof" style="width:auto"><option value="b" selected>Balanced (recommended)</option><option value="s">Sensitive: more alerts</option><option value="t">Strict: fewer alerts</option></select></label><span class="mut" style="flex:1;min-width:240px;max-width:62ch">Rules run automatically when a file loads. They cover logon abuse, Kerberos attacks, lateral movement, privilege changes, persistence, credential theft, defense evasion, malware and ransomware behavior, for any Windows event ID.</span></div>
+<details style="margin-top:12px"><summary id="rulesum" style="padding:0">View all rules</summary><div id="rulelist" class="mut" style="margin-top:8px"></div></details></section>
+
+<div id="banner" role="alert"></div>
+
+<section class="card" id="sumcard" hidden>
+<div class="stats" id="stats"></div><p class="mut" id="note" style="margin:12px 0 0"></p>
+<h2 style="margin-top:16px">Failed logons over time</h2>
+<div class="bars" id="bars" aria-label="Failed logons per period"></div><div class="axis"><span id="ax1"></span><span id="ax2"></span></div>
+<p class="mut" style="margin:6px 0 0">Red bars contain an alert.</p>
+</section>
+
+<section class="card" id="alcard" hidden>
+<div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">Alerts</h2><button id="export" class="ghost">Export alerts (JSON)</button></div>
+<div id="alerts"></div></section>
+
+<section class="card" id="aicard" hidden>
+<h2>AI analysis</h2>
+<p class="mut" style="margin-top:0">Claude reads the alert summary and writes a triage report: likely attack story, ATT&amp;CK techniques, first response steps, and what may be a false positive.</p>
+<div class="row"><button id="aiBtn">Analyze with Claude</button></div>
+<div class="row" style="margin-top:10px"><label style="flex:1;min-width:220px">Ask a follow-up<input id="q" type="text" placeholder="e.g. Which account should I reset first?"></label><button id="ask" class="ghost">Ask</button></div>
+<pre class="ai" id="aiout"></pre></section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const $=s=>document.querySelector(s),SEVN=['','low','medium','high','critical'];
+let EV=[],ALERTS=[],SUM=null,FILES=[];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=t=>{const d=new Date(t),p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`};
+
+function parseCSV(text){text=text.replace(/^\uFEFF/,'');const first=text.split(/\r?\n/,1)[0];
+ const d=[',',';','\t','|'].map(c=>[c,first.split(c).length]).sort((a,b)=>b[1]-a[1])[0][0];
+ const rows=[];let r=[],f='',q=false;
+ for(let i=0;i<text.length;i++){const c=text[i];
+  if(q){if(c==='"'){if(text[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+  else if(c==='"')q=true;else if(c===d){r.push(f);f=''}
+  else if(c==='\n'||c==='\r'){if(c==='\r'&&text[i+1]==='\n')i++;r.push(f);f='';if(r.length>1||r[0]!=='')rows.push(r);r=[]}
+  else f+=c}
+ if(f!==''||r.length){r.push(f);rows.push(r)}return rows}
+
+const ALIAS={t:['timecreated','timegenerated','timestamp','time','datetime','eventtime','date','_time'],id:['eventid','eventcode','id'],
+user:['targetusername','accountname','username','user','targetuser','subjectusername'],ip:['ipaddress','sourcenetworkaddress','sourceip','srcip','sourceaddress','clientaddress','src','ip'],
+ws:['workstationname','workstation','sourcehostname','sourcehost'],lt:['logontype'],ch:['channel'],host:['computername','computer','hostname','host','devicename'],msg:['message','description','eventdata','details']};
+const nm=h=>String(h).toLowerCase().replace(/^@/,'').replace(/^json_data\./,'').replace(/[^a-z0-9]/g,'');
+function normalize(rows){if(rows.length<2)return[];const h=rows[0].map(nm),m={};let rawI=-1;{const f=rows[1]||[];rawI=f.findIndex(v=>typeof v==='string'&&v.trim()[0]==='{'&&v.includes('"EventID"'))}
+ for(const k in ALIAS)for(const a of ALIAS[k]){const i=h.indexOf(a);if(i>=0){m[k]=i;break}}
+ const g=(r,k)=>m[k]==null?'':String(r[m[k]]??'').trim(),out=[];
+ for(let n=1;n<rows.length;n++){const r=rows[n];let t=Date.parse(g(r,'t'));if(isNaN(t))t=Date.parse(g(r,'t').replace(' ','T'));
+  let j={};if(rawI>=0){try{j=JSON.parse(r[rawI])}catch(e){}}
+  const id=parseInt(g(r,'id')||j.EventID);if(isNaN(t)||isNaN(id))continue;const msg=g(r,'msg')||j.Message||'';
+  const pick=(...ns)=>{for(const n of ns){const i=h.indexOf(nm(n));if(i>=0&&r[i]!=null&&String(r[i])!=='')return String(r[i]);if(j[n]!=null&&j[n]!=='')return String(j[n])}return''};
+  let ip=g(r,'ip')||j.IpAddress||j.SourceNetworkAddress||'',user=j.TargetUserName||g(r,'user')||j.AccountName||'';if(user==='-')user='';
+  if(!ip){const x=msg.match(/Source Network Address:\s*([0-9a-f.:]+)/i);if(x)ip=x[1]}
+  if(!user){const x=[...msg.matchAll(/Account Name:\s*(\S+)/gi)].pop();if(x)user=x[1]}
+  if(['-','::1','127.0.0.1','::ffff:127.0.0.1'].includes(ip))ip='';
+  out.push({t,id,user:user.toLowerCase().replace(/^.*\\/,''),ip,ws:g(r,'ws')||j.WorkstationName||'',lt:parseInt(g(r,'lt')||j.LogonType)||0,host:g(r,'host')||j.Hostname||'',ch:(g(r,'ch')||j.Channel||'').toLowerCase(),msg,st:pick('SubStatus','Status').toLowerCase(),lp:pick('LogonProcessName'),ap:pick('AuthenticationPackageName'),kl:pick('KeyLength'),enc:pick('TicketEncryptionType'),svc:pick('ServiceName').toLowerCase(),pre:pick('PreAuthType'),cmd:pick('CommandLine','ProcessCommandLine'),share:pick('ShareName'),tgt:pick('TargetServerName'),mem:pick('MemberName'),sv:pick('Severity','EventType'),src:pick('SourceName','ProviderName')})}
+ return out}
+
+function slide(list,W){let bn={n:0},bu={u:0},j=0;const c=new Map();
+ for(let i=0;i<list.length;i++){const u=list[i].user;c.set(u,(c.get(u)||0)+1);
+  while(list[i].t-list[j].t>W){const x=list[j].user,k=c.get(x)-1;k?c.set(x,k):c.delete(x);j++}
+  const n=i-j+1;if(n>bn.n)bn={n,u:c.size,s:list[j].t,e:list[i].t,users:[...c.keys()]};
+  if(c.size>bu.u)bu={u:c.size,n,s:list[j].t,e:list[i].t,users:[...c.keys()]}}
+ return{bn,bu}}
+
+const PROF={b:{T:10,W:5,S:5,L:8,tr:3},s:{T:5,W:10,S:3,L:5,tr:2},t:{T:20,W:5,S:8,L:12,tr:4}};
+const R=[
+['1102','',4,'Security audit log cleared','Defense evasion (T1070.001)','Someone cleared the Security log. Attackers do this to hide activity.'],
+['104','',4,'Event log cleared','Defense evasion (T1070.001)','A Windows event log was cleared.'],
+['4719','',3,'Audit policy changed','Defense evasion (T1562.002)','Auditing was changed, which can blind detection.'],
+['4720','',2,'User account created','Persistence (T1136)','Confirm this was an approved change.'],
+['4722|4725|4726','',1,'Account enabled, disabled or deleted','Impact (T1531)','Account state changed. Review if unexpected.'],
+['4724','',2,'Password reset by another account','Persistence (T1098)','A password was reset by someone other than the owner.'],
+['4728|4732|4756','',3,'Member added to a security group','Privilege escalation (T1098)','A group membership changed.'],
+['4765|4766','',4,'SID history added to an account','Privilege escalation (T1134.005)','SID history abuse gives hidden admin rights.'],
+['4794','',4,'Directory Services Restore Mode password set','Persistence (T1098)','Rarely legitimate outside domain controller recovery.'],
+['4697|7045','',3,'Service installed','Persistence (T1543.003)','A new service was registered. Check the binary path.'],
+['4698|4702','',2,'Scheduled task created or changed','Persistence (T1053.005)','Check the task action.'],
+['4706|4713|4739','',3,'Domain trust or policy changed','Defense evasion (T1484)','Domain-wide security settings changed.'],
+['4946|4947|4948|4950','',2,'Windows Firewall rule changed','Defense evasion (T1562.004)','A firewall rule or setting changed.'],
+['4616','',2,'System time changed','Defense evasion (T1070.006)','Time changes can break log correlation.'],
+['6416','',2,'New external device recognised','Initial access (T1091)','A USB or external device was connected.'],
+['4649','',3,'Kerberos replay detected','Credential access (T1558)','A replayed Kerberos request was seen.'],
+['1116|1117','defender',3,'Microsoft Defender detected malware','Execution (T1204)','Defender flagged or acted on a threat.'],
+['1118|1119','defender',4,'Microsoft Defender failed to clean malware','Execution (T1204)','The threat may still be active.'],
+['5001|5010|5012|5013','defender',4,'Defender protection disabled','Defense evasion (T1562.001)','Real-time protection or scanning was turned off.'],
+['5007','defender',2,'Defender settings changed','Defense evasion (T1562.001)','Check for new exclusions.'],
+['5861','wmi',4,'WMI permanent event subscription','Persistence (T1546.003)','A stealthy persistence method.'],
+['8','sysmon',3,'Remote thread created in another process','Defense evasion (T1055)','Process injection indicator.'],
+['25','sysmon',3,'Process tampering','Defense evasion (T1055)','A process image was replaced or hollowed.']];
+R.push(
+['4699|4700|4701','',1,'Scheduled task deleted or toggled','Defense evasion (T1070)','A task was deleted, enabled or disabled.'],
+['4703|4704|4717','',3,'User right or token privilege changed','Privilege escalation (T1134)','Sensitive privileges such as debug or backup may have been granted. Check the account.'],
+['4727|4731|4754','',2,'Security group created','Persistence (T1136)','A new security group was created.'],
+['4734|4758|4735|4737|4755|4764','',2,'Security group deleted or changed','Persistence (T1098)','Group settings changed or the group was removed.'],
+['4741','',3,'Computer account created','Persistence (T1136)','Rogue machine accounts are used in relay and delegation attacks.'],
+['4781','',2,'Account renamed','Defense evasion (T1098)','Renaming can hide or impersonate an account.'],
+['4782','',4,'Password hash accessed','Credential access (T1003)','Password hashes were read.'],
+['4964','',2,'Special groups assigned to a logon','Privilege escalation (T1078.002)','A privileged group logon was recorded.'],
+['5025|5030|5034','',3,'Windows Firewall service stopped','Defense evasion (T1562.004)','The firewall or its driver stopped.'],
+['5038|6281','',3,'Code integrity violation','Defense evasion (T1553)','An unsigned or tampered binary tried to load.'],
+['5142|5144','',2,'Network share created or deleted','Lateral movement (T1021.002)','A file share was added or removed.'],
+['5136|5137|5139|5141','',2,'Active Directory object changed','Persistence (T1484)','Directory objects such as GPOs were created or modified.'],
+['5376|5377','',3,'Credential Manager backup or restore','Credential access (T1555.004)','Stored credentials were exported or restored.'],
+['4610|4611|4614|4622','',4,'Authentication or security package loaded','Persistence (T1547.002)','LSA loaded an extra package, a technique used to steal passwords.'],
+['4890|4900','',3,'Certificate template changed','Credential access (T1649)','Templates decide who can obtain identity certificates.'],
+['4912|4904|4905','',3,'Per-user audit policy or event source changed','Defense evasion (T1562.002)','Auditing behavior was changed.'],
+['4928|4929','',3,'AD replication source added or removed','Defense evasion (T1207)','May indicate a rogue domain controller.'],
+['1100','',4,'Event logging service shut down','Defense evasion (T1562.002)','Logging stopped.'],
+['1101|1104|4612','',3,'Audit events dropped or log full','Defense evasion (T1562.002)','Events may be lost.'],
+['7040','system',2,'Service start type changed','Persistence (T1543.003)','A service was set to start at a different time.'],
+['6008|41','system|kernel',1,'Unexpected shutdown','Impact (T1529)','The system stopped unexpectedly.'],
+['1006|1015','defender',3,'Defender detected malware or suspicious behavior','Execution (T1204)','Defender raised a detection.'],
+['1007','defender',2,'Defender took action on a threat','Execution (T1204)','Defender removed or quarantined something.'],
+['1008','defender',4,'Defender action failed','Execution (T1204)','The threat may still be active.'],
+['5004|5008','defender',2,'Defender settings changed or engine failed','Defense evasion (T1562.001)','Check that protection is still running.'],
+['1121|1122|1125|1126','defender',3,'Attack surface reduction or network protection triggered','Execution (T1204)','Defender blocked risky behavior.'],
+['1123|1124|1127|1128','defender',4,'Controlled folder access triggered','Impact (T1486)','Possible ransomware touching protected folders.'],
+['2','sysmon',3,'File creation time changed','Defense evasion (T1070.006)','Timestomping hides when a file was dropped.'],
+['9','sysmon',3,'Raw disk access','Credential access (T1006)','Direct disk reads bypass file protections.'],
+['19|20|21','sysmon',4,'WMI event filter, consumer or binding','Persistence (T1546.003)','WMI subscriptions run code without a visible service.'],
+['106|140','taskscheduler',2,'Scheduled task registered or updated','Persistence (T1053.005)','Check the task action.'],
+['8003|8004|8006|8007','applocker',3,'AppLocker blocked or warned','Execution (T1204)','Application control stopped a program.'],
+['2004|2005|2006|2033','firewall',2,'Firewall rule added, changed or deleted','Defense evasion (T1562.004)','Check the rule.'],
+['770','dns',4,'DNS server plugin DLL loaded','Persistence (T1574)','Abused through DNSAdmins to run code on the DNS server.']);
+const RM=new Map();R.forEach(r=>r[0].split('|').forEach(i=>{if(!RM.has(i))RM.set(i,[]);RM.get(i).push({rx:r[1]?new RegExp(r[1]):null,s:r[2],t:r[3],m:r[4],d:r[5]})}));
+const C=[
+[/-e(nc|ncodedcommand)?\s+[a-z0-9+\/=]{20,}|frombase64string/i,3,'Encoded PowerShell','Execution (T1059.001)'],
+[/mimikatz|sekurlsa|lsadump::|invoke-mimikatz/i,4,'Credential dumping tool','Credential access (T1003)'],
+[/comsvcs(\.dll)?[, ]+#?minidump|procdump.*lsass|reg\s+save\s+hklm\\(sam|security|system)|ntdsutil.*ifm|ntds\.dit/i,4,'Credential store dump (LSASS, SAM or NTDS)','Credential access (T1003)'],
+[/vssadmin.*delete\s+shadows|wbadmin.*delete|bcdedit.*(recoveryenabled\s+no|ignoreallfailures)|shadowcopy.*delete/i,4,'Backup or shadow copy deletion (ransomware behavior)','Impact (T1490)'],
+[/wevtutil\s+cl|clear-eventlog/i,4,'Event logs cleared from command line','Defense evasion (T1070.001)'],
+[/set-mppreference.*disable|add-mppreference.*exclusion|advfirewall.*state\s+off|sc\s+(stop|config).*(windefend|sense)/i,4,'Security tooling disabled','Defense evasion (T1562.001)'],
+[/downloadstring|downloadfile|net\.webclient|invoke-webrequest.*http|\biex\b.*http|certutil.*-(urlcache|decode)|bitsadmin.*\/transfer|mshta\s+http|regsvr32.*\/i:http/i,3,'Download cradle or living-off-the-land transfer','Command and control (T1105)'],
+[/net1?\s+(user|localgroup|group)\s.*\/add/i,3,'Account or group created from command line','Persistence (T1136)'],
+[/psexec|paexec|wmic.*\/node.*process\s+call|schtasks.*\/s\s|sc\s+\\\\\S+\s+create/i,3,'Remote execution tooling','Lateral movement (T1021)'],
+[/schtasks.*\/create|sc\s+create|reg\s+add.*\\run(once)?\b/i,2,'Persistence set from command line','Persistence (T1053, T1547)'],
+[/whoami\s+\/(all|priv|groups)|nltest\s+\/(domain_trusts|dclist)|domain admins|adfind|sharphound|bloodhound|dsquery/i,2,'Reconnaissance commands','Discovery (T1087, T1482)'],
+[/rubeus|kerberoast|asktgt|cobalt\s?strike|meterpreter|powersploit/i,4,'Known attack tool name','Execution (T1059)']];
+
+C.push(
+[/(?:winword|excel|powerpnt|outlook)\.exe[\s\S]{0,400}\\(?:cmd|powershell|wscript|cscript|mshta)\.exe|\\(?:cmd|powershell|wscript|cscript|mshta)\.exe[\s\S]{0,400}(?:winword|excel|powerpnt|outlook)\.exe/i,4,'Office app started a script or shell','Execution (T1204.002)'],
+[/w3wp\.exe[\s\S]{0,400}\\(?:cmd|powershell)\.exe|\\(?:cmd|powershell)\.exe[\s\S]{0,400}w3wp\.exe/i,4,'Web server process started a shell (web shell or Exchange exploit)','Persistence (T1505.003)'],
+[/(?:process name|image):\s*[a-z]:\\(?!windows\\(?:system32|syswow64|winsxs))[^\r\n]*\\(?:svchost|lsass|csrss|services|winlogon|smss|wininit)\.exe/i,4,'System process name running from the wrong folder','Defense evasion (T1036.005)'],
+[/(?:process name|image):\s*[a-z]:\\(?:users\\public|programdata|windows\\temp|perflogs|\$recycle\.bin|users\\[^\\\r\n]+\\appdata\\local\\temp)\\[^\r\n]*\.exe/i,2,'Program started from a temp or user-writable folder','Defense evasion (T1036)'],
+[/invoke-(?:smbexec|wmiexec|thehash|inveigh|dcsync|reflectivepeinjection|shellcode)|crackmapexec|impacket|secretsdump|lazagne|seatbelt|sharpup|powerup|winpeas|covenant|sliver|havoc|bruteratel/i,4,'Known offensive tool','Execution (T1059)'],
+[/amsiutils|amsiinitfailed|amsicontext|\[ref\]\.assembly\.gettype.*amsi/i,4,'AMSI bypass','Defense evasion (T1562.001)'],
+[/virtualalloc|writeprocessmemory|createremotethread|reflection\.assembly\]::load|add-type.*dllimport/i,4,'In-memory code injection from PowerShell','Defense evasion (T1055)'],
+[/(?:-nop(?:rofile)?\b.*(?:-w(?:indowstyle)?\s+hidden|-ep\s+bypass|-executionpolicy\s+bypass))|(?:-w(?:indowstyle)?\s+hidden.*(?:-nop|-ep\s+bypass))/i,3,'Hidden PowerShell with execution policy bypass','Execution (T1059.001)'],
+[/(?:curl|wget|invoke-webrequest|iwr|start-bitstransfer)\b.*https?:\/\/\S+\.(?:exe|dll|ps1|bat|vbs|hta|zip)/i,3,'Payload download','Command and control (T1105)'],
+[/disableantispyware|disablerealtimemonitoring|disablebehaviormonitoring|disableioavprotection/i,4,'Defender disabled through settings','Defense evasion (T1562.001)'],
+[/taskkill.*(?:msmpeng|mssense|antimalware|sentinel|crowdstrike|cylance|sophos|veeam)|net\s+stop.*(?:defend|sense|backup|sql|veeam|vss)/i,4,'Security or backup services stopped (ransomware preparation)','Impact (T1489)'],
+[/fsutil.*usn.*deletejournal|vssadmin.*resize\s+shadowstorage|cipher\s+\/w|diskpart.*clean|bcdedit.*safeboot/i,4,'Data destruction or recovery tampering','Impact (T1485)'],
+[/vssadmin\s+create\s+shadow|diskshadow/i,3,'Shadow copy created for credential theft','Credential access (T1003.003)'],
+[/uselogoncredential|wdigest/i,4,'WDigest cleartext password setting','Credential access (T1003)'],
+[/fodhelper|eventvwr.*mscfile|computerdefaults|ms-settings\\shell\\open\\command|sdclt.*kickoffelev/i,3,'UAC bypass','Privilege escalation (T1548.002)'],
+[/image file execution options|\\winlogon\\(?:shell|userinit)|appinit_dlls|userinitmprlogonscript/i,3,'Registry persistence or debugger hijack','Persistence (T1546)'],
+[/rundll32.*(?:javascript:|\\(?:temp|appdata|programdata)\\)|scrobj\.dll|\b(?:installutil|regasm|regsvcs|cmstp|odbcconf|ieexec|pcalua)\b.*(?:\.dll|\.inf|http)|wmic.*\/format:.*\.xsl|msbuild.*\.(?:xml|csproj)/i,3,'Living-off-the-land binary abuse','Defense evasion (T1218)'],
+[/netsh.*portproxy|\b(?:chisel|ngrok|plink|socat|frpc?|sshuttle)\b|ssh\s.*-[RLD]\s/i,3,'Tunneling or port forwarding','Command and control (T1572)'],
+[/\brclone\b|megacmd|mega\.nz|curl.*\s-T\s|(?:7z|rar|winrar)\S*\s+a\s.*-hp|compress-archive/i,3,'Archiving or exfiltration tooling','Exfiltration (T1560, T1567)'],
+[/fdenytsconnections.*\/d\s+0|enable-psremoting|winrm\s+quickconfig/i,2,'Remote access enabled','Lateral movement (T1021)'],
+[/netsh.*wlan.*key=clear|cmdkey\s+\/list|vaultcmd/i,3,'Stored credential harvesting','Credential access (T1555)'],
+[/set-executionpolicy\s+(?:bypass|unrestricted)|remove-item.*consolehost_history|set-psreadlineoption.*savenothing/i,2,'Execution policy or history tampering','Defense evasion (T1070.003)'],
+[/new-mailboxexportrequest|new-managementroleassignment|add-mailboxpermission|new-transportrule|new-inboxrule.*(?:forward|delete|redirect)|set-mailbox.*forwarding(?:smtp)?address/i,3,'Exchange mailbox export, forwarding or role change','Collection (T1114)']);
+
+function extra(x){const{cfg,W,ev,oks,fails,add,by,human,PRV}=x;
+ for(const[k,l]of by(fails.filter(e=>/c0000064/.test(e.st)),e=>e.ip||e.ws||'unknown source')){const b=slide(l,W).bu;if(b.u>=cfg.T)add(3,'enum',`Username enumeration from ${k}`,`${b.u} non-existent account names tried within ${cfg.W} min.`,l,'Discovery (T1087)',b.s,k)}
+ for(const[k,l]of by(fails.filter(e=>/c0000072|c0000193|c0000071/.test(e.st)),e=>e.user))add(2,'dead','Logon attempts on disabled or expired account: '+k,'Someone tried an account that is disabled, expired or has an expired password.',l,'Valid accounts (T1078)',l[0].t,k);
+ const lk=ev.filter(e=>e.id===4740),bl=slide(lk,W).bu;if(bl.u>=cfg.S)add(3,'mass','Many accounts locked out at once',`${bl.u} accounts locked within ${cfg.W} min, typical of spraying.`,lk,'Credential access (T1110.003)',bl.s,'lockouts');
+ const g=oks.filter(e=>e.user==='guest');if(g.length)add(3,'guest','Guest account logged on','The Guest account should be disabled.',g,'Valid accounts (T1078.001)',g[0].t,'guest');
+ const ad=oks.filter(e=>e.user==='administrator'&&(e.lt===3||e.lt===10));if(ad.length)add(2,'bia','Built-in Administrator used over the network','The default Administrator account logged on remotely. Named admin accounts are easier to audit.',ad,'Valid accounts (T1078.001)',ad[0].t,'administrator');
+ const an=ev.filter(e=>e.id===4624&&e.user==='anonymous logon'&&e.ip&&!PRV.test(e.ip));if(an.length)add(3,'null','Anonymous logon from a public address','A null session came from outside the network.',an,'Discovery (T1087)',an[0].t,'anonymous');
+ for(const[u,l]of by(oks.filter(e=>[2,10,11].includes(e.lt)&&/^(svc|service|sql|backup|app)[_.-]/.test(e.user)),e=>e.user))add(3,'svcint','Service account logged on interactively: '+u,'Service accounts should not sign in at a keyboard or over RDP.',l,'Valid accounts (T1078.002)',l[0].t,u);
+ for(const[u,l]of by(oks.filter(e=>e.lt===3&&/ntlmssp/i.test(e.lp)&&/ntlm/i.test(e.ap)&&e.kl==='0'),e=>e.user))if(l.length>=3)add(2,'pth','Possible pass-the-hash by '+u,`${l.length} NTLM network logons without a session key, a pattern left by pass-the-hash tools.`,l,'Lateral movement (T1550.002)',l[0].t,u);
+ for(const[u,l]of by(oks.filter(e=>e.ip&&!PRV.test(e.ip)),e=>e.user)){const b=slide(l.map(e=>({t:e.t,user:e.ip})),36e5).bu;if(b.u>=3)add(3,'multiip','Account used from many addresses: '+u,`${b.u} different public addresses within one hour.`,l,'Valid accounts (T1078)',b.s,u)}
+ const SUSP=/(?:cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin)\.exe|\\(?:temp|appdata|programdata|users\\public)\\|https?:\/\/|-enc\b|\\\\[^\\]+\\(?:admin|c)\$|%comspec%/i;
+ for(const[k,l]of by(ev.filter(e=>[7045,4697,4698,4702].includes(e.id)&&SUSP.test(e.msg)),e=>e.id+'|'+(e.host||'-'))){const svc=l[0].id===7045||l[0].id===4697;
+  add(svc?4:3,'payload',(svc?'Service':'Scheduled task')+' with a suspicious command on '+(l[0].host||'unknown host'),'The action launches a shell, script host, temp-folder file or remote share, which is how PsExec and malware persist.',l,'Persistence (T1543.003, T1053.005)',l[0].t,k)}
+ const rd=ev.filter(e=>(e.id===1149&&/remoteconnection/.test(e.ch))||([21,25].includes(e.id)&&/localsession/.test(e.ch))).map(e=>({...e,ip:e.ip||((e.msg.match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)||[])[1]||'')})).filter(e=>e.ip&&!PRV.test(e.ip)&&!/^127\./.test(e.ip));
+ for(const[ip,l]of by(rd,e=>e.ip))add(3,'rdp2','Remote Desktop session from public address '+ip,'Terminal Services recorded a session from outside the private network.',l,'Initial access (T1133)',l[0].t,ip);
+ const dg=ev.filter(e=>e.id===400&&/powershell/.test(e.ch)&&/EngineVersion=2\./.test(e.msg));if(dg.length)add(3,'psv2','PowerShell version 2 downgrade','Attackers use PowerShell 2 to skip script logging and AMSI.',dg,'Defense evasion (T1562.010)',dg[0].t,'psv2');
+ const SY=e=>{if(!/sysmon/.test(e.ch))return'';const m=e.msg;
+  if(e.id===3&&/image:.*\\(?:powershell|rundll32|regsvr32|mshta|wscript|cscript|certutil|msbuild)\.exe/i.test(m))return'Script host or LOLBin made a network connection';
+  if(e.id===22&&/queryname:\s*\S*(?:ngrok|pastebin|transfer\.sh|duckdns|no-ip|\.onion)/i.test(m))return'DNS lookup of a commonly abused service';
+  if([12,13,14].includes(e.id)&&/currentversion\\run|image file execution|winlogon\\(?:shell|userinit)|appinit_dlls|uselogoncredential/i.test(m))return'Registry persistence or credential setting change';
+  if([17,18].includes(e.id)&&/pipe(?:name)?:\s*\\?(?:msagent_|postex_|status_[0-9a-f]|msse-|mojo\.5688)/i.test(m))return'Known command-and-control named pipe';
+  if(e.id===11&&/\\startup\\[^\r\n]*\.(?:exe|dll|ps1|vbs|bat|js|hta|scr)/i.test(m))return'Executable written to a Startup folder';return''};
+ for(const[k,l]of by(ev.filter(e=>SY(e)),e=>SY(e)+'|'+(e.host||'-')))add(3,'sysmon',SY(l[0])+' on '+(l[0].host||'unknown host'),'A Sysmon event matched a known attack pattern.',l,'Command and control, persistence (T1071, T1547)',l[0].t,k);
+ const D=/\b(?:net\s+(?:view|share|use|user|group|localgroup|time)|arp\s+-a|ipconfig\s+\/all|systeminfo|tasklist\s+\/v|quser|qwinsta|netstat\s+-ano|nslookup|whoami)\b/i;
+ for(const[h,l]of by(ev.filter(e=>(e.id===4688||(e.id===1&&/sysmon/.test(e.ch)))&&D.test((e.cmd||'')+e.msg)),e=>e.host||'-')){const b=slide(l.map(e=>({t:e.t,user:e.cmd||String(e.t)})),W).bu;if(b.u>=6)add(2,'disc','Burst of discovery commands on '+h,`${b.u} different reconnaissance commands within ${cfg.W} min.`,l,'Discovery (T1082, T1087)',b.s,h)}
+ for(const[h,l]of by(ev,e=>e.host||'-')){if(l.length<50)continue;const gp=[];for(let i=1;i<l.length;i++)gp.push(l[i].t-l[i-1].t);const med=[...gp].sort((a,b)=>a-b)[gp.length>>1]||1000,i=gp.findIndex(d=>d>=18e5&&d>40*med);
+  if(i>=0)add(2,'gap',`Log source went silent: ${h}`,`No events for ${Math.round(gp[i]/6e4)} minutes, far longer than usual. The agent may have stopped or logs may have been tampered with.`,[l[i],l[i+1]],'Defense evasion (T1562.002)',l[i].t,h)}}
+
+function detect(cfg){const A=[],W=cfg.W*60000,PRIV=/admin|enterprise|schema|backup op|account op|server op|dnsadmins/i,PRV=/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|fe80|f[cd]|::1)/i;
+ const add=(sev,rule,title,detail,ev,mitre,t,key)=>A.push({sev,rule,title,detail,mitre,t,key,evidence:ev.slice(0,8).map(e=>`${fmt(e.t)}\tID ${e.id}\t${e.user||'-'}\t${e.ip||e.ws||'-'}\t${e.host||''}`),count:ev.length});
+ const by=(l,f)=>{const m=new Map;for(const e of l){const k=f(e);if(!m.has(k))m.set(k,[]);m.get(k).push(e)}return m};
+ const ev=[...EV].sort((a,b)=>a.t-b.t),human=e=>e.user&&!e.user.endsWith('$')&&!['system','anonymous logon'].includes(e.user);
+ const fails=ev.filter(e=>human(e)&&(e.id===4625||(e.id===4771&&(!e.st||e.st==='0x18'))||(e.id===4776&&e.st&&!/^0x0+$/.test(e.st)))),oks=ev.filter(e=>e.id===4624&&human(e));
+ // 1. logon abuse: brute force, spraying, success after failures
+ const fk=by(fails,e=>e.ip||e.ws||'unknown source'),bad=new Set();
+ for(const[k,l]of fk){const{bn,bu}=slide(l,W);
+  if(bu.u>=cfg.S&&bu.n>=cfg.S){bad.add(k);add(3,'spray',`Password spraying from ${k}`,`${bu.n} failures against ${bu.u} different accounts within ${cfg.W} min. Low-and-slow guessing of common passwords across many users.`,l,'Credential access (T1110.003)',bu.s,k)}
+  else if(bn.n>=cfg.T){bad.add(k);add(bn.n>=cfg.T*5?4:3,'brute',`Brute force from ${k}`,`${bn.n} failed logons within ${cfg.W} min against ${bn.users.slice(0,5).join(', ')}${bn.users.length>5?'…':''}.`,l,'Credential access (T1110.001)',bn.s,k)}}
+ const seen=new Set();
+ for(const o of oks){const k=o.ip||o.ws||'unknown source';if(!bad.has(k))continue;
+  const p=fk.get(k).filter(f=>f.t<=o.t&&o.t-f.t<=W*3),id=k+'|'+o.user;
+  if(p.length>=cfg.T&&!seen.has(id)){seen.add(id);add(4,'success',`Successful logon after failures: ${o.user}`,`${o.user} logged on from ${k} right after ${p.length} failed attempts from the same source. The password may have been guessed.`,[...p.slice(-4),o],'Initial access (T1078)',o.t,k)}}
+ for(const[u,l]of by(ev.filter(e=>e.id===4740),e=>e.user))add(l.length>=3?3:2,'lockout',`Account locked out: ${u}`,`${l.length} lockout event(s). Often follows password guessing against this account.`,l,'Credential access (T1110)',l[0].t,u);
+ for(const e of oks.filter(e=>e.lt===10&&e.ip&&!PRV.test(e.ip)).slice(0,1))add(3,'rdp','Remote Desktop logon from a public address',`${e.user} logged on over RDP from ${e.ip}. RDP should not be reachable from the internet.`,oks.filter(x=>x.lt===10&&x.ip&&!PRV.test(x.ip)),'Initial access (T1133)',e.t,e.ip);
+ // 2. Kerberos and directory attacks
+ for(const[u,l]of by(ev.filter(e=>e.id===4769&&/0x17/i.test(e.enc)&&e.svc&&!e.svc.endsWith('$')&&!/krbtgt/i.test(e.svc)&&human(e)),e=>e.user)){const b=slide(l.map(e=>({t:e.t,user:e.svc})),W).bu;
+  if(b.u>=Math.max(3,cfg.S-1))add(3,'kerb',`Possible Kerberoasting by ${u}`,`${b.u} different service tickets with weak RC4 encryption within ${cfg.W} min.`,l,'Credential access (T1558.003)',b.s,u)}
+ for(const[u,l]of by(ev.filter(e=>e.id===4768&&e.pre==='0'&&human(e)),e=>e.user))add(3,'asrep',`AS-REP roasting target: ${u}`,'A Kerberos ticket was requested without pre-authentication, which lets attackers crack the password offline.',l,'Credential access (T1558.004)',l[0].t,u);
+ for(const[u,l]of by(ev.filter(e=>e.id===4662&&/1131f6a[ad]-9c07-11d1-f79f-00c04fc2dcd2|89e95b76-444d-4c62-991a-0facbeda640c/i.test(e.msg)&&!e.user.endsWith('$')),e=>e.user))add(4,'dcsync',`Possible DCSync by ${u}`,'A non-machine account used directory replication rights, which is how attackers copy every password hash.',l,'Credential access (T1003.006)',l[0].t,u);
+ // 3. lateral movement
+ const nl=by(oks.filter(e=>(e.lt===3||e.lt===9)&&e.host),e=>e.user);
+ for(const[u,l]of nl){const b=slide(l.map(e=>({t:e.t,user:e.host})),W).bu;if(b.u>=cfg.L)add(2,'fan',`${u} logged on to many hosts`,`${b.u} different hosts within ${cfg.W} min. Normal for some service accounts, suspicious for a person.`,l,'Lateral movement (T1021)',b.s,u)}
+ for(const[u,l]of by(ev.filter(e=>e.id===4648&&human(e)&&e.tgt&&!/^(localhost|-)$/i.test(e.tgt)),e=>e.user)){const b=slide(l.map(e=>({t:e.t,user:e.tgt})),W).bu;if(b.u>=4)add(3,'creds',`Explicit credentials used on many targets: ${u}`,`${b.u} different target servers within ${cfg.W} min.`,l,'Lateral movement (T1550)',b.s,u)}
+ for(const[u,l]of by(ev.filter(e=>(e.id===5140||e.id===5145)&&human(e)&&/(^|\\)(c|admin)\$$/i.test(e.share)),e=>e.user)){const b=slide(l.map(e=>({t:e.t,user:e.host})),W).bu;if(b.u>=3)add(3,'share',`Admin share access across hosts: ${u}`,`${b.u} hosts accessed through C$ or ADMIN$ within ${cfg.W} min.`,l,'Lateral movement (T1021.002)',b.s,u)}
+ // 4. single-event rules for persistence, privilege, evasion, malware
+ const one=new Map;
+ for(const e of ev){for(const r of RM.get(String(e.id))||[]){if(r.rx&&!r.rx.test(e.ch))continue;let s=r.s,t=r.t;
+  if(/^47(28|32|56)$/.test(e.id)&&PRIV.test(e.user+' '+e.mem+' '+e.msg)){s=4;t='Member added to a privileged group'}
+  const k=t+'|'+(e.user||e.host||'-');if(!one.has(k))one.set(k,{s,t,r,l:[]});one.get(k).l.push(e)}}
+ for(const o of one.values()){const k=o.l[0].user||o.l[0].host;add(o.s,'event',`${o.t}${k?': '+k:''}`,o.r.d,o.l,o.r.m,o.l[0].t,k)}
+ // 5. command lines and scripts (process creation, PowerShell, Sysmon)
+ const cm=new Map;
+ for(const e of ev){if(!(e.id===4688||e.id===4103||e.id===4104||(e.id===1&&/sysmon|exchange/.test(e.ch))))continue;const tx=((e.cmd||'')+' '+e.msg).slice(0,4000);
+  for(const[rx,s,t,m]of C)if(rx.test(tx)){const k=t+'|'+(e.host||'-');if(!cm.has(k))cm.set(k,{s,t,m,l:[]});cm.get(k).l.push(e)}}
+ for(const c of cm.values())add(c.s,'cmd',`${c.t} on ${c.l[0].host||'unknown host'}`,'Command line or script text matched a known attack pattern. Admin tooling can look similar, so verify who ran it.',c.l,c.m,c.l[0].t,c.t);
+ const ls=ev.filter(e=>e.id===10&&/sysmon/.test(e.ch)&&/lsass\.exe/i.test(e.msg)&&/0x1010|0x1410|0x1fffff|0x143a/i.test(e.msg));
+ if(ls.length)add(4,'lsass','LSASS memory access (credential dumping)','A process opened LSASS with rights that credential dumpers use.',ls,'Credential access (T1003.001)',ls[0].t,'lsass');
+ for(const[k,l]of by(ev.filter(e=>/crit|error/i.test(e.sv)&&e.src),e=>e.src+'|'+e.id))if(l.length>=20)add(1,'errors',`Repeated errors from ${l[0].src} (event ${l[0].id})`,`${l.length} error or critical events. Not an attack by itself, but a failing service can hide or cause outages.`,l,'Operational health',l[0].t,k);
+ // 6. behavior model: learns each user's usual hours and sources, flags deviations
+ const ul=by(oks.filter(e=>[2,3,7,10,11].includes(e.lt)||!e.lt),e=>e.user);
+ for(const[u,l]of ul){if(l.length<15)continue;const h=Array(24).fill(0),ips=new Map;
+  l.forEach(e=>{h[new Date(e.t).getHours()]++;if(e.ip)ips.set(e.ip,(ips.get(e.ip)||0)+1)});
+  const odd=l.filter(e=>h[new Date(e.t).getHours()]/l.length<.03);
+  if(odd.length&&odd.length<=l.length*.1)add(2,'offhours',`Unusual logon hours: ${u}`,`${odd.length} logon(s) at hours this account rarely uses (under 3% of its history, local time).`,odd,'Valid accounts (T1078)',odd[0].t,u);
+  const nip=[...ips].filter(([,c])=>c===1).map(x=>x[0]),rare=l.filter(e=>nip.includes(e.ip));
+  if(ips.size>1&&rare.length&&rare.length<=3)add(2,'newip',`New source address for ${u}`,`${rare.length} logon(s) from address(es) seen only once: ${nip.slice(0,3).join(', ')}.`,rare,'Valid accounts (T1078)',rare[0].t,u)}
+ const hb=new Map;fails.forEach(f=>{const k=Math.floor(f.t/3600000);hb.set(k,(hb.get(k)||0)+1)});
+ const v=[...hb.values()];if(v.length>=6){const mu=v.reduce((a,b)=>a+b,0)/v.length,sd=Math.sqrt(v.reduce((a,b)=>a+(b-mu)**2,0)/v.length)||1;
+  for(const[k,c]of hb){const z=(c-mu)/sd;if(z>=3&&c>=cfg.T&&!A.some(a=>a.rule==='spike'))add(2,'spike','Spike in failed logons',`${c} failures in one hour; the usual is ${mu.toFixed(1)} per hour (z-score ${z.toFixed(1)}).`,fails.filter(f=>Math.floor(f.t/3600000)===k),'Credential access (T1110)',k*3600000,'volume')}}
+ extra({cfg,W,ev,oks,fails,add,by,human,PRV});
+ A.sort((a,b)=>b.sev-a.sev||b.count-a.count);return{A,fails,ev}}
+
+function render(){const sev=PROF[$('#prof').value].tr,trig=ALERTS.filter(a=>a.sev>=sev);
+ const b=$('#banner');b.style.display=trig.length?'block':'none';
+ b.textContent=trig.length?`${trig.length} alert${trig.length>1?'s':''} triggered at ${SEVN[sev]} severity or above. Highest: ${trig[0].title}.`:'';
+ document.title=trig.length?`(${trig.length}) Windows Log Triage`:'Windows Log Triage';
+ const fl=SUM.fails,ts=EV.map(e=>e.t),min=Math.min(...ts),max=Math.max(...ts);
+ $('#sumcard').hidden=$('#alcard').hidden=$('#aicard').hidden=false;
+ const ips=new Set(fl.map(f=>f.ip).filter(Boolean)).size;
+ $('#stats').innerHTML=[[EV.length,'events'],[fl.length,'failed logons'],[ips,'failing sources'],[ALERTS.length,'alerts'],[trig.length,'triggered']].map(([n,l])=>`<div><b>${n.toLocaleString()}</b><span>${l}</span></div>`).join('');
+ const step=(max-min)>14*864e5?864e5:3600000,n=Math.min(Math.floor((max-min)/step)+1,400),bk=Array(n).fill(0),hit=Array(n).fill(false);
+ fl.forEach(f=>bk[Math.min(n-1,Math.floor((f.t-min)/step))]++);ALERTS.forEach(a=>{if(a.t)hit[Math.min(n-1,Math.max(0,Math.floor((a.t-min)/step)))]=true});
+ const mx=Math.max(1,...bk);$('#bars').innerHTML=bk.map((c,i)=>`<div class="bar${hit[i]?' hit':''}" style="height:${Math.max(2,c/mx*100)}%" title="${esc(fmt(min+i*step))}: ${c} failed"></div>`).join('');
+ const idc={};EV.forEach(e=>idc[e.id]=(idc[e.id]||0)+1);const top=Object.entries(idc).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([i,c])=>`${i} (${c})`).join(', ');
+ $('#note').textContent=`Event IDs in this data: ${top}.`+(EV.some(e=>[4624,4625,4740,4771,4776].includes(e.id))?'':' No logon events (4624, 4625) were found, so the brute-force and spray checks have nothing to work on. Ask your SIEM to include the Windows Security channel in the export.');
+ $('#ax1').textContent=fmt(min);$('#ax2').textContent=fmt(max);
+ $('#alerts').innerHTML=ALERTS.length?ALERTS.map(a=>`<details class="al ${SEVN[a.sev]}"><summary><span class="sev ${SEVN[a.sev]}">${SEVN[a.sev]}</span><strong>${esc(a.title)}</strong>${a.sev>=sev?'<span class="trig">Triggered</span>':''}<span class="tag">${esc(a.mitre)}</span></summary><div class="body"><p>${esc(a.detail)}</p><div class="scroll"><table>${a.evidence.map(r=>'<tr>'+r.split('\t').map(c=>`<td>${esc(c)}</td>`).join('')+'</tr>').join('')}</table></div>${a.count>8?`<span class="mut">Showing 8 of ${a.count} events</span>`:''}</div></details>`).join(''):'<p class="mut">No alerts. Nothing crossed your thresholds.</p>'}
+
+function analyze(){if(!EV.length){alert('Load a CSV file first.');return}
+ const cfg=PROF[$('#prof').value];
+ const r=detect(cfg);ALERTS=r.A;SUM=r;render();$('#aiout').textContent=''}
+
+async function readX(f){if(!window.XLSX)return[];const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});let out=[];for(const n of wb.SheetNames){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''});if(!out.length)out=r;else out.push(...r.slice(1))}return out}
+async function load(files){FILES=[];EV=[];let skipped=0;
+ for(const f of files){const rows=/\.xlsx?$/i.test(f.name)?await readX(f):parseCSV(await f.text()),e=normalize(rows);if(!e.length)skipped++;EV.push(...e);FILES.push(f.name)}
+ $('#fileinfo').textContent=EV.length?`${FILES.join(', ')}: ${EV.length.toLocaleString()} events read`+(skipped?` (${skipped} file(s) had no usable rows)`:''):'No usable rows. The CSV needs time and event ID columns (for example TimeCreated, EventID).';
+ if(EV.length)analyze()}
+
+const drop=$('#drop'),fi=$('#file');
+drop.onclick=()=>fi.click();drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fi.click()}};
+fi.onchange=()=>load([...fi.files]);
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('on')};drop.ondragleave=()=>drop.classList.remove('on');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('on');load([...e.dataTransfer.files])};
+$('#prof').onchange=()=>EV.length&&analyze();
+
+
+
+$('#export').onclick=async()=>{try{const d=await claude.use('downloads');if(!d){alert('Saving is not available in this view.');return}
+ await d.save({filename:'alerts.json',data:new Blob([JSON.stringify(ALERTS,null,2)],{type:'application/json'})})}catch(e){}};
+
+function digest(){return JSON.stringify({files:FILES,events:EV.length,failedLogons:SUM.fails.length,
+ range:[fmt(Math.min(...EV.map(e=>e.t))),fmt(Math.max(...EV.map(e=>e.t)))],
+ alerts:ALERTS.slice(0,30).map(a=>({severity:SEVN[a.sev],rule:a.rule,title:a.title,detail:a.detail,mitre:a.mitre,events:a.count,firstSeen:fmt(a.t),sample:a.evidence.slice(0,3)}))})}
+let sampleFn=null;
+async function ai(question){const out=$('#aiout');
+ if(!ALERTS.length){out.textContent='There are no alerts to analyze.';return}
+ try{if(!sampleFn)sampleFn=await claude.use('sample')}catch(e){}
+ if(!sampleFn){out.textContent='AI analysis is not available in this view. Open the page in claude.ai to use it.';return}
+ const p=`You are a SOC analyst. Below is a JSON summary of alerts detected in Windows Security logs.\n${digest()}\n\n`+(question?`Answer this question using only the data above, in plain text: ${question}`:`Write a concise triage report in plain text (no markdown symbols) with these headings: Summary, Likely attack story, ATT&CK techniques, Immediate actions (ordered), Possible false positives. Be specific about accounts and addresses from the data and say when evidence is thin.`);
+ out.textContent='Thinking...';$('#aiBtn').disabled=$('#ask').disabled=true;
+ try{await sampleFn(p,{cache:false,onText:({text})=>{out.textContent=text}})}
+ catch(e){out.textContent=e&&e.code==='not_granted'?'Permission to ask Claude was declined.':'The AI request failed'+(e&&e.code==='rate_limited'?' (rate limited). Try again shortly.':'. Try again.')}
+ $('#aiBtn').disabled=$('#ask').disabled=false}
+$('#aiBtn').onclick=()=>ai();$('#ask').onclick=()=>{const q=$('#q').value.trim();if(q)ai(q)};
+{const L=['Brute force','Password spraying','Success after failures','Account lockouts','Mass lockouts','Username enumeration','Disabled or expired account logons','Kerberoasting','AS-REP roasting','DCSync','Pass-the-hash','Many hosts per account','Explicit credentials on many targets','Admin share access','RDP from public address','Account used from many addresses','Guest, Administrator, anonymous and service account misuse','Suspicious service or task command','Discovery command bursts','Unusual logon hours and new sources','Failed logon spikes','Log source silence','Repeated errors'];
+const u=a=>[...new Set(a)],T=u(R.map(r=>r[3])),K=u(C.map(c=>c[2]));
+$('#rulelist').innerHTML=`<p><b>Correlation and behavior (${L.length})</b><br>${esc(L.join('; '))}</p><p><b>Single-event rules (${T.length})</b><br>${esc(T.join('; '))}</p><p><b>Command line and script rules (${K.length})</b><br>${esc(K.join('; '))}</p><p>Also Sysmon network, DNS, registry, pipe and file rules.</p>`;$('#rulesum').textContent=`View all ${L.length+T.length+K.length} rules`}
+</script></body></html>
